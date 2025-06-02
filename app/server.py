@@ -48,7 +48,7 @@ transaction_processing_time = Gauge('transaction_processing_time', 'Transaction 
 @app.get("/")
 async def proxy_grafana():
     try:
-        grafana_url = "http://localhost:3000/d/default/fastapi-monitoring?orgId=1"
+        grafana_url = "http://localhost:3000/"
         async with httpx.AsyncClient(timeout=10.0) as client:
             print(f"Requesting Grafana dashboard at {grafana_url}")
             r = await client.get(grafana_url, follow_redirects=True)
@@ -60,6 +60,32 @@ async def proxy_grafana():
     except Exception as e:
         print(f"❌ Failed to connect to Grafana: {e}")
         return Response(content="Grafana 연결 실패", status_code=500)
+
+@app.get("/{path:path}")
+async def proxy_all(path: str, request: Request):
+    try:
+        grafana_url = f"http://localhost:3000/{path}"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # 원본 요청의 모든 헤더와 쿼리 파라미터를 전달
+            headers = dict(request.headers)
+            params = dict(request.query_params)
+            
+            print(f"Proxying request to Grafana: {grafana_url}")
+            r = await client.get(
+                grafana_url,
+                headers=headers,
+                params=params,
+                follow_redirects=True
+            )
+            return Response(
+                content=r.content,
+                status_code=r.status_code,
+                media_type=r.headers.get("content-type", "text/html"),
+                headers=dict(r.headers)
+            )
+    except Exception as e:
+        print(f"❌ Failed to proxy request to Grafana: {e}")
+        return Response(content="Grafana 프록시 실패", status_code=500)
 
 @app.post("/predict/")
 async def predict(data: dict):

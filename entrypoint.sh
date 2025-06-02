@@ -32,6 +32,8 @@ echo "Starting Grafana..."
   --pidfile=/var/run/grafana/grafana-server.pid \
   --packaging=docker \
   cfg:server.http_port=3000 \
+  cfg:server.root_url=http://localhost:3000/ \
+  cfg:server.serve_from_sub_path=true \
   cfg:default.log.mode=console \
   --debug &
 
