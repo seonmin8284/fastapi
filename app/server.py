@@ -13,16 +13,19 @@ import httpx
 from starlette.middleware.base import BaseHTTPMiddleware
 import websockets
 import asyncio
+from starlette.websockets import WebSocketDisconnect
 
 app = FastAPI()
 
-# CORS 설정 업데이트
+# CORS 설정 업데이트 - WebSocket 지원 추가
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    allow_origin_regex=".*"
 )
 
 # X-Frame-Options 제거 미들웨어
@@ -182,87 +185,41 @@ async def predict(data: dict):
 async def get_metrics():
     return REGISTRY.get_sample_value('transaction_count')
 
-# @app.get("/dashboard", response_class=HTMLResponse)
-# async def dashboard(request: Request):
-#     html_content = """
-#     <!DOCTYPE html>
-#     <html>
-#     <head>
-#         <title>Voice Monitor Dashboard</title>
-#         <style>
-#             body {
-#                 margin: 0;
-#                 padding: 20px;
-#                 font-family: Arial, sans-serif;
-#                 background-color: #f0f2f5;
-#             }
-#             .container {
-#                 max-width: 1200px;
-#                 margin: 0 auto;
-#             }
-#             h1 {
-#                 color: #2c3e50;
-#                 margin-bottom: 20px;
-#             }
-#             .dashboard-container {
-#                 background: white;
-#                 border-radius: 8px;
-#                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-#                 padding: 20px;
-#                 margin-bottom: 20px;
-#             }
-#             iframe {
-#                 border: none;
-#                 border-radius: 4px;
-#                 width: 100%;
-#                 height: 800px;
-#             }
-#         </style>
-#     </head>
-#     <body>
-#         <div class="container">
-#             <h1>Voice Monitor Dashboard</h1>
-#             <div class="dashboard-container">
-#                 <iframe src="http://localhost:3000/d/default/fastapi-monitoring?orgId=1&refresh=5s" 
-#                         width="100%" 
-#                         height="800px" 
-#                         frameborder="0">
-#                 </iframe>
-#             </div>
-#         </div>
-#     </body>
-#     </html>
-#     """
-#     return HTMLResponse(content=html_content)
-
 @app.websocket("/api/live/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    
-    # Grafana WebSocket 서버에 연결
-    async with websockets.connect('ws://localhost:3000/api/live/ws') as grafana_ws:
-        try:
-            # 클라이언트 -> Grafana
-            async def forward_to_grafana():
+    try:
+        await websocket.accept()
+        grafana_ws_url = "ws://localhost:3000/api/live/ws"
+        
+        async with websockets.connect(
+            grafana_ws_url,
+            extra_headers={
+                "Origin": "http://localhost:3000",
+                "Host": "localhost:3000"
+            }
+        ) as grafana_ws:
+            try:
                 while True:
+                    # 클라이언트로부터 메시지 받기
                     data = await websocket.receive_text()
+                    # Grafana로 전달
                     await grafana_ws.send(data)
-            
-            # Grafana -> 클라이언트
-            async def forward_to_client():
-                while True:
-                    data = await grafana_ws.recv()
-                    await websocket.send_text(data)
-            
-            # 양방향 데이터 전달
-            await asyncio.gather(
-                forward_to_grafana(),
-                forward_to_client()
-            )
-        except Exception as e:
-            print(f"WebSocket error: {e}")
-        finally:
+                    
+                    # Grafana로부터 응답 받기
+                    response = await grafana_ws.recv()
+                    # 클라이언트로 전달
+                    await websocket.send_text(response)
+            except WebSocketDisconnect:
+                print("Client disconnected")
+            except Exception as e:
+                print(f"Error in websocket communication: {e}")
+    except Exception as e:
+        print(f"Failed to establish websocket connection: {e}")
+    finally:
+        try:
             await websocket.close()
+        except:
+            pass
 
 # Prometheus HTTP endpoint 노출
 threading.Thread(target=lambda: start_http_server(9101)).start()
