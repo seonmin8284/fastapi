@@ -31,9 +31,9 @@ echo "Starting Grafana..."
   --homepath=/usr/share/grafana \
   --pidfile=/var/run/grafana/grafana-server.pid \
   --packaging=docker \
+  cfg:server.http_port=3000 \
   cfg:default.log.mode=console \
   --debug &
-
 
 # Wait for Grafana to be ready
 wait_for_service localhost 3000 "Grafana"
