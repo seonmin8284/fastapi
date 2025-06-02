@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from kafka import KafkaProducer
 import json
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -11,10 +11,21 @@ import time
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 import httpx
 from starlette.middleware.base import BaseHTTPMiddleware
+import websockets
+import asyncio
 
 app = FastAPI()
 
-# X-Frame-Options 헤더를 제거하는 미들웨어
+# CORS 설정 업데이트
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# X-Frame-Options 제거 미들웨어
 class RemoveXFrameOptionsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -22,15 +33,6 @@ class RemoveXFrameOptionsMiddleware(BaseHTTPMiddleware):
             del response.headers["x-frame-options"]
         return response
 
-# CORS 설정 - 필요한 것만 최소한으로 설정
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
-
-# X-Frame-Options 제거 미들웨어 추가
 app.add_middleware(RemoveXFrameOptionsMiddleware)
 
 # Instrumentator 설정
@@ -233,6 +235,34 @@ async def dashboard(request: Request):
     """
     return HTMLResponse(content=html_content)
 
+@app.websocket("/api/live/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    
+    # Grafana WebSocket 서버에 연결
+    async with websockets.connect('ws://localhost:3000/api/live/ws') as grafana_ws:
+        try:
+            # 클라이언트 -> Grafana
+            async def forward_to_grafana():
+                while True:
+                    data = await websocket.receive_text()
+                    await grafana_ws.send(data)
+            
+            # Grafana -> 클라이언트
+            async def forward_to_client():
+                while True:
+                    data = await grafana_ws.recv()
+                    await websocket.send_text(data)
+            
+            # 양방향 데이터 전달
+            await asyncio.gather(
+                forward_to_grafana(),
+                forward_to_client()
+            )
+        except Exception as e:
+            print(f"WebSocket error: {e}")
+        finally:
+            await websocket.close()
 
 # Prometheus HTTP endpoint 노출
 threading.Thread(target=lambda: start_http_server(9101)).start()
