@@ -10,8 +10,17 @@ from fastapi.middleware.cors import CORSMiddleware
 import time
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 import httpx
+from starlette.middleware.base import BaseHTTPMiddleware
 
 app = FastAPI()
+
+# X-Frame-Options 헤더를 제어하는 미들웨어
+class CustomHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        # X-Frame-Options 헤더를 SAMEORIGIN으로 설정
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
 
 # CORS 설정 - 필요한 것만 최소한으로 설정
 app.add_middleware(
@@ -20,6 +29,9 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+# 커스텀 헤더 미들웨어 추가
+app.add_middleware(CustomHeadersMiddleware)
 
 # Instrumentator 설정
 Instrumentator().instrument(app).expose(app)
@@ -52,13 +64,15 @@ def safe_headers(headers: dict) -> dict:
         "expires",
         "etag",
         "last-modified",
-        "x-frame-options",
     }
-    return {
+    safe_headers = {
         k.lower(): v 
         for k, v in headers.items() 
         if k.lower() in safe_header_names
     }
+    # X-Frame-Options 헤더를 SAMEORIGIN으로 설정
+    safe_headers["x-frame-options"] = "SAMEORIGIN"
+    return safe_headers
 
 @app.get("/")
 async def proxy_grafana():
