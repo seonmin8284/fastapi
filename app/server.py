@@ -8,17 +8,16 @@ import random
 from fastapi import Body
 from fastapi.middleware.cors import CORSMiddleware
 import time
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 import httpx
 
 app = FastAPI()
 
-# CORS 설정
+# CORS 설정 - 필요한 것만 최소한으로 설정
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -44,6 +43,22 @@ transaction_success = Counter('transaction_success', 'Number of successful trans
 transaction_failure = Counter('transaction_failure', 'Number of failed transactions')
 transaction_processing_time = Gauge('transaction_processing_time', 'Transaction processing time in seconds')
 
+# 안전한 헤더만 전달하기 위한 함수
+def safe_headers(headers: dict) -> dict:
+    # 전달해도 안전한 헤더들
+    safe_header_names = {
+        "content-type",
+        "cache-control",
+        "expires",
+        "etag",
+        "last-modified",
+        "x-frame-options",
+    }
+    return {
+        k.lower(): v 
+        for k, v in headers.items() 
+        if k.lower() in safe_header_names
+    }
 
 @app.get("/")
 async def proxy_grafana():
@@ -52,40 +67,68 @@ async def proxy_grafana():
         async with httpx.AsyncClient(timeout=10.0) as client:
             print(f"Requesting Grafana dashboard at {grafana_url}")
             r = await client.get(grafana_url, follow_redirects=True)
+            
+            # content-type 헤더 안전하게 처리
+            media_type = r.headers.get("content-type", "text/html").split(";")[0].strip()
+            
             return Response(
                 content=r.content,
                 status_code=r.status_code,
-                media_type=r.headers.get("content-type", "text/html")
+                media_type=media_type,
+                headers=safe_headers(dict(r.headers))
             )
     except Exception as e:
         print(f"❌ Failed to connect to Grafana: {e}")
-        return Response(content="Grafana 연결 실패", status_code=500)
+        return Response(
+            content="Grafana 연결 실패",
+            status_code=500,
+            media_type="text/plain"
+        )
 
 @app.get("/{path:path}")
 async def proxy_all(path: str, request: Request):
     try:
         grafana_url = f"http://localhost:3000/{path}"
+        
+        # 원본 요청에서 안전한 헤더만 추출
+        headers = {
+            k: v for k, v in request.headers.items()
+            if k.lower() not in ["host", "connection", "content-length"]
+        }
+        
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # 원본 요청의 모든 헤더와 쿼리 파라미터를 전달
-            headers = dict(request.headers)
-            params = dict(request.query_params)
-            
             print(f"Proxying request to Grafana: {grafana_url}")
             r = await client.get(
                 grafana_url,
                 headers=headers,
-                params=params,
+                params=dict(request.query_params),
                 follow_redirects=True
             )
+            
+            # content-type 헤더 안전하게 처리
+            media_type = r.headers.get("content-type", "text/html").split(";")[0].strip()
+            
+            # 스트리밍 응답이 필요한 경우 (예: 이벤트 스트림)
+            if media_type == "text/event-stream":
+                return StreamingResponse(
+                    content=r.iter_bytes(),
+                    media_type=media_type,
+                    headers=safe_headers(dict(r.headers))
+                )
+            
             return Response(
                 content=r.content,
                 status_code=r.status_code,
-                media_type=r.headers.get("content-type", "text/html"),
-                headers=dict(r.headers)
+                media_type=media_type,
+                headers=safe_headers(dict(r.headers))
             )
     except Exception as e:
         print(f"❌ Failed to proxy request to Grafana: {e}")
-        return Response(content="Grafana 프록시 실패", status_code=500)
+        return Response(
+            content="Grafana 프록시 실패",
+            status_code=500,
+            media_type="text/plain"
+        )
 
 @app.post("/predict/")
 async def predict(data: dict):
