@@ -8,7 +8,8 @@ import random
 from fastapi import Body
 from fastapi.middleware.cors import CORSMiddleware
 import time
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+import httpx
 
 app = FastAPI()
 
@@ -45,8 +46,20 @@ transaction_processing_time = Gauge('transaction_processing_time', 'Transaction 
 
 
 @app.get("/")
-async def root():
-    return RedirectResponse(url="http://localhost:3000")
+async def proxy_grafana():
+    async with httpx.AsyncClient() as client:
+        grafana_url = "http://grafana:3000/d/default/fastapi-monitoring?orgId=1"
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "keep-alive",
+        }
+        r = await client.get(grafana_url, headers=headers, follow_redirects=True)
+        return Response(
+            content=r.content,
+            status_code=r.status_code,
+            media_type=r.headers.get("content-type", "text/html")
+        )
 
 @app.post("/predict/")
 async def predict(data: dict):
