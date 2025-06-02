@@ -78,7 +78,8 @@ def safe_headers(headers: dict) -> dict:
 @app.get("/")
 async def proxy_grafana():
     try:
-        grafana_url = "http://localhost:3000/"
+        # 새로운 대시보드 URL로 리다이렉트
+        grafana_url = "http://localhost:3000/d/fastapi-metrics/이상거래-탐지-모니터링?orgId=1&refresh=5s"
         async with httpx.AsyncClient(timeout=10.0) as client:
             print(f"Requesting Grafana dashboard at {grafana_url}")
             r = await client.get(grafana_url, follow_redirects=True)
