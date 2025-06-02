@@ -85,9 +85,16 @@ async def proxy_grafana():
     try:
         # 새로운 대시보드 URL로 리다이렉트
         grafana_url = "http://localhost:3000/d/fastapi-metrics/fastapi-metrics-dashboard?orgId=1&refresh=5s"
+        headers = {
+            "X-WEBAUTH-USER": "admin",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Cache-Control": "no-cache"
+        }
         async with httpx.AsyncClient(timeout=10.0) as client:
             print(f"Requesting Grafana dashboard at {grafana_url}")
-            r = await client.get(grafana_url, follow_redirects=True)
+            r = await client.get(grafana_url, headers=headers, follow_redirects=True)
             
             # content-type 헤더 안전하게 처리
             media_type = r.headers.get("content-type", "text/html").split(";")[0].strip()
@@ -106,36 +113,91 @@ async def proxy_grafana():
             media_type="text/plain"
         )
 
-@app.get("/{path:path}")
-async def proxy_all(path: str, request: Request):
+# @app.get("/{path:path}")
+# async def proxy_all(path: str, request: Request):
+#     try:
+#         grafana_url = f"http://localhost:3000/{path}"
+        
+#         # 원본 요청에서 안전한 헤더만 추출하고 인증 헤더 추가
+#         headers = {
+#             k: v for k, v in request.headers.items()
+#             if k.lower() not in ["host", "connection", "content-length"]
+#         }
+#         headers.update({
+#             "X-WEBAUTH-USER": "admin",
+#             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+#             "Accept-Encoding": "gzip, deflate, br",
+#             "Connection": "keep-alive",
+#             "Cache-Control": "no-cache"
+#         })
+        
+#         async with httpx.AsyncClient(timeout=10.0) as client:
+#             print(f"Proxying request to Grafana: {grafana_url}")
+#             r = await client.get(
+#                 grafana_url,
+#                 headers=headers,
+#                 params=dict(request.query_params),
+#                 follow_redirects=True
+#             )
+            
+#             # content-type 헤더 안전하게 처리
+#             media_type = r.headers.get("content-type", "text/html").split(";")[0].strip()
+            
+#             # 스트리밍 응답이 필요한 경우 (예: 이벤트 스트림)
+#             if media_type == "text/event-stream":
+#                 return StreamingResponse(
+#                     content=r.iter_bytes(),
+#                     media_type=media_type,
+#                     headers=safe_headers(dict(r.headers))
+#                 )
+            
+#             return Response(
+#                 content=r.content,
+#                 status_code=r.status_code,
+#                 media_type=media_type,
+#                 headers=safe_headers(dict(r.headers))
+#             )
+#     except Exception as e:
+#         print(f"❌ Failed to proxy request to Grafana: {e}")
+#         return Response(
+#             content="Grafana 프록시 실패",
+#             status_code=500,
+#             media_type="text/plain"
+#         )
+
+@app.post("/{path:path}")
+async def proxy_all_post(path: str, request: Request):
     try:
         grafana_url = f"http://localhost:3000/{path}"
         
-        # 원본 요청에서 안전한 헤더만 추출
+        # 요청 본문 읽기
+        body = await request.body()
+        
+        # 원본 요청에서 안전한 헤더만 추출하고 인증 헤더 추가
         headers = {
             k: v for k, v in request.headers.items()
             if k.lower() not in ["host", "connection", "content-length"]
         }
+        headers.update({
+            "X-WEBAUTH-USER": "admin",
+            "Accept": "application/json",
+            "Content-Type": request.headers.get("content-type", "application/json"),
+            "Connection": "keep-alive",
+            "Cache-Control": "no-cache"
+        })
         
         async with httpx.AsyncClient(timeout=10.0) as client:
-            print(f"Proxying request to Grafana: {grafana_url}")
-            r = await client.get(
+            print(f"Proxying POST request to Grafana: {grafana_url}")
+            r = await client.post(
                 grafana_url,
                 headers=headers,
+                content=body,
                 params=dict(request.query_params),
                 follow_redirects=True
             )
             
             # content-type 헤더 안전하게 처리
-            media_type = r.headers.get("content-type", "text/html").split(";")[0].strip()
-            
-            # 스트리밍 응답이 필요한 경우 (예: 이벤트 스트림)
-            if media_type == "text/event-stream":
-                return StreamingResponse(
-                    content=r.iter_bytes(),
-                    media_type=media_type,
-                    headers=safe_headers(dict(r.headers))
-                )
+            media_type = r.headers.get("content-type", "application/json").split(";")[0].strip()
             
             return Response(
                 content=r.content,
@@ -144,9 +206,9 @@ async def proxy_all(path: str, request: Request):
                 headers=safe_headers(dict(r.headers))
             )
     except Exception as e:
-        print(f"❌ Failed to proxy request to Grafana: {e}")
+        print(f"❌ Failed to proxy POST request to Grafana: {e}")
         return Response(
-            content="Grafana 프록시 실패",
+            content=f"Grafana POST 프록시 실패: {str(e)}",
             status_code=500,
             media_type="text/plain"
         )
@@ -187,27 +249,30 @@ async def get_metrics():
 
 @app.websocket("/api/live/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    print("WebSocket connection request received")
     try:
         await websocket.accept()
         grafana_ws_url = "ws://localhost:3000/api/live/ws"
         
+        # WebSocket 연결에 필요한 헤더 설정
+        extra_headers = {
+            "Origin": "http://localhost:3000",
+            "Host": "localhost:3000"
+        }
+        
         async with websockets.connect(
             grafana_ws_url,
-            extra_headers={
-                "Origin": "http://localhost:3000",
-                "Host": "localhost:3000"
-            }
+            extra_headers=extra_headers,
+            subprotocols=["grafana-live-protocol"]
         ) as grafana_ws:
+            print("Connected to Grafana WebSocket")
             try:
                 while True:
-                    # 클라이언트로부터 메시지 받기
                     data = await websocket.receive_text()
-                    # Grafana로 전달
+                    print(f"Received from client: {data}")
                     await grafana_ws.send(data)
-                    
-                    # Grafana로부터 응답 받기
                     response = await grafana_ws.recv()
-                    # 클라이언트로 전달
+                    print(f"Received from Grafana: {response}")
                     await websocket.send_text(response)
             except WebSocketDisconnect:
                 print("Client disconnected")

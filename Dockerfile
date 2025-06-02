@@ -49,8 +49,8 @@ COPY . .
 
 # Copy Grafana configuration files
 COPY grafana/provisioning/dashboards/default.yml /etc/grafana/provisioning/dashboards/
-COPY grafana/provisioning/datasources/prometheus.yml /etc/grafana/provisioning/datasources/
-COPY grafana/dashboards/default.json /var/lib/grafana/dashboards/
+COPY grafana/provisioning/datasources/datasource.yml /etc/grafana/provisioning/datasources/
+COPY grafana/dashboards/fastapi_metrics_dashboard.json /var/lib/grafana/dashboards/
 COPY grafana/grafana.ini /etc/grafana/grafana.ini
 
 RUN chmod +x entrypoint.sh
